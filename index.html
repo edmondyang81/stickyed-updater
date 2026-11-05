@@ -190,9 +190,11 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
         </div>
       </div>
       <label class="check"><input type="checkbox" id="f-home" checked> Use the Hermes dashboard as the home screen</label>
+      <p class="hint" id="clock-hint">Also sets the Sticky's clock to this computer's time.</p>
       <div class="row">
         <button type="submit" class="primary" id="btn-write" disabled>Write to Sticky</button>
         <button type="button" id="btn-load" disabled>Load from Sticky</button>
+        <button type="button" id="btn-clock" disabled>Set clock only</button>
       </div>
       <div class="status" id="cfg-status" role="status"></div>
     </form>
@@ -424,7 +426,7 @@ let deviceFw = null;
 function setStep(id, enabled) { $(id).setAttribute("aria-disabled", enabled ? "false" : "true"); }
 function setStatus(id, text, kind = "") { const el = $(id); el.textContent = text; el.className = "status" + (kind ? " " + kind : ""); }
 function setBusy(b) {
-  for (const id of ["btn-update", "btn-write", "btn-load", "btn-books", "btn-restart"]) $(id).disabled = b || !port;
+  for (const id of ["btn-update", "btn-write", "btn-load", "btn-clock", "btn-books", "btn-restart"]) $(id).disabled = b || !port;
   $("btn-books").disabled = b || !port || !$("f-books").files.length;
 }
 
@@ -578,6 +580,9 @@ function readForm() {
     dashboardLandscape: $("f-orient").value === "landscape",
     maxRecordSeconds: Math.min(600, Math.max(5, parseInt($("f-maxrec").value, 10) || 90)),
     micGain: parseInt($("f-gain").value, 10) || 4,
+    // The Sticky's clock: this computer's time and timezone (DST-aware).
+    utcOffsetMinutes: -new Date().getTimezoneOffset(),
+    setClockUtc: Math.round(Date.now() / 1000),
   };
 }
 
@@ -593,6 +598,25 @@ async function loadConfig(quiet) {
 }
 $("btn-load").addEventListener("click", () => loadConfig(false));
 
+// Sets time + timezone without touching the other settings on the card.
+$("btn-clock").addEventListener("click", async () => {
+  if (!link) return;
+  setBusy(true);
+  setStatus("cfg-status", "Setting the clock…");
+  try {
+    let cfg = {};
+    try { cfg = JSON.parse(dec.decode(await link.readFile("/hermes/config.json"))); } catch (e) {
+      if (!/fopen|SD card/.test(e.message)) throw e;  // no file yet: start empty
+    }
+    cfg.utcOffsetMinutes = -new Date().getTimezoneOffset();
+    cfg.setClockUtc = Math.round(Date.now() / 1000);
+    await link.writeFile("/hermes/config.json", enc.encode(JSON.stringify(cfg, null, 2) + "\n"));
+    setStatus("cfg-status", `Clock set to ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`, "ok");
+  } catch (e) {
+    setStatus("cfg-status", e.message, "bad");
+  } finally { setBusy(false); }
+});
+
 $("cfg").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   if (!link) return;
@@ -601,11 +625,12 @@ $("cfg").addEventListener("submit", async (ev) => {
   setBusy(true);
   setStatus("cfg-status", "Writing to the SD card…");
   try {
+    cfg.setClockUtc = Math.round(Date.now() / 1000);  // as late as possible
     await link.writeFile("/hermes/config.json", enc.encode(JSON.stringify(cfg, null, 2) + "\n"));
-    setStatus("cfg-status", `Saved. ${cfg.networks.length ? "Wi-Fi passwords were moved into the Sticky. " : ""}The dashboard will sync now.`, "ok");
+    setStatus("cfg-status", `Saved, and the clock is set. ${cfg.networks.length ? "Wi-Fi passwords were moved into the Sticky. " : ""}The dashboard will sync now.`, "ok");
     for (const r of document.querySelectorAll(".net input[type=password]")) r.value = "";
     $("f-bridge").value = cfg.bridgeUrl;
-    try { localStorage.setItem(REMEMBER_KEY, JSON.stringify({ ...cfg, token: undefined, networks: undefined })); } catch {}
+    try { localStorage.setItem(REMEMBER_KEY, JSON.stringify({ ...cfg, token: undefined, networks: undefined, setClockUtc: undefined })); } catch {}
   } catch (e) {
     setStatus("cfg-status", e.message, "bad");
   } finally { setBusy(false); }
@@ -651,6 +676,12 @@ $("btn-copylog").addEventListener("click", async () => {
 $("btn-restart").addEventListener("click", async () => { if (link) { await link.restart(); log("[updater] restart requested"); } });
 
 try { const saved = JSON.parse(localStorage.getItem(REMEMBER_KEY) || "null"); if (saved) fillForm(saved); } catch {}
+{
+  const m = -new Date().getTimezoneOffset();
+  const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return ""; } })();
+  const off = `UTC${m >= 0 ? "+" : "-"}${Math.floor(Math.abs(m) / 60)}${Math.abs(m) % 60 ? ":" + String(Math.abs(m) % 60).padStart(2, "0") : ""}`;
+  $("clock-hint").textContent = `Also sets the Sticky's clock to this computer's time and timezone (${tz ? tz + ", " : ""}${off}).`;
+}
 if (!document.querySelector(".net")) netRow();
 setBusy(true);
 </script>
