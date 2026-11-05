@@ -552,7 +552,9 @@ function netRow(ssid = "", home = true) {
 $("btn-addnet").addEventListener("click", () => netRow());
 
 function fillForm(cfg) {
-  if (cfg.bridgeUrl !== undefined) $("f-bridge").value = cfg.bridgeUrl;
+  // Never blank a field the user already filled in with an empty value from
+  // the device (a fresh Sticky has no bridge yet).
+  if (cfg.bridgeUrl) $("f-bridge").value = cfg.bridgeUrl;
   if (cfg.token) $("f-token").value = cfg.token;
   if (cfg.refreshMinutes) $("f-refresh").value = cfg.refreshMinutes;
   if (cfg.maxRecordSeconds) $("f-maxrec").value = cfg.maxRecordSeconds;
@@ -564,8 +566,10 @@ function fillForm(cfg) {
   if (cfg.dashboardLandscape !== undefined) $("f-orient").value = cfg.dashboardLandscape ? "landscape" : "portrait";
   if (cfg.dashboardHome !== undefined) $("f-home").checked = !!cfg.dashboardHome;
   if (Array.isArray(cfg.homeNetworks) && cfg.homeNetworks.length) {
-    $("nets").innerHTML = "";
-    for (const s of cfg.homeNetworks) netRow(s, true);
+    // Merge: keep rows (and typed passwords) the user already has.
+    const have = new Set([...document.querySelectorAll(".net input[type=text]")].map((i) => i.value.trim()));
+    for (const r of [...document.querySelectorAll(".net")]) if (!r.querySelector("input[type=text]").value.trim()) r.remove();
+    for (const s of cfg.homeNetworks) if (!have.has(s)) netRow(s, true);
   }
 }
 
@@ -629,6 +633,11 @@ $("cfg").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   if (!link) return;
   const cfg = readForm();
+  if (!cfg.bridgeUrl || !cfg.token) {
+    setStatus("cfg-status", "Fill in the bridge address and token first (the installer printed both).", "bad");
+    (cfg.bridgeUrl ? $("f-token") : $("f-bridge")).focus();
+    return;
+  }
   setBusy(true);
   setStatus("cfg-status", "Writing to the SD card…");
   try {
