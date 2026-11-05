@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StickyED Updater</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600&display=swap">
+<style>
+/* Layout: one narrow column of numbered steps, like the card that ships in the box; device log docked at the bottom. */
+:root {
+  --paper: #eceeea;      /* e-ink panel grey, slightly green */
+  --sheet: #f8f9f6;
+  --ink: #17191a;
+  --ink-soft: #4d5352;
+  --rule: #c9cdc8;
+  --accent: #0d6b66;     /* deep teal: the one colour on the page */
+  --accent-ink: #ffffff;
+  --ok: #2d6a2f;
+  --warn: #8a5a00;
+  --bad: #a3312b;
+  --log-bg: #1d2120;
+  --log-fg: #cfd6d2;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #151817; --sheet: #1d2120; --ink: #e6ebe8; --ink-soft: #a3aca8; --rule: #353c3a;
+    --accent: #4fb3ab; --accent-ink: #0b1514; --ok: #7cc47f; --warn: #e0b45a; --bad: #f08a83;
+    --log-bg: #0e1110; --log-fg: #c3ccc8; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #151817; --sheet: #1d2120; --ink: #e6ebe8; --ink-soft: #a3aca8; --rule: #353c3a;
+  --accent: #4fb3ab; --accent-ink: #0b1514; --ok: #7cc47f; --warn: #e0b45a; --bad: #f08a83;
+  --log-bg: #0e1110; --log-fg: #c3ccc8; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--paper); color: var(--ink); font: 15px/1.5 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 48px;
+}
+main { max-width: 720px; margin: 0 auto; display: grid; gap: 20px; }
+header { display: grid; gap: 6px; }
+h1 { font: 600 2rem/1.1 var(--font-display); letter-spacing: -0.01em; margin: 0; text-wrap: balance; }
+.lede { margin: 0; color: var(--ink-soft); max-width: 60ch; }
+.build { font: 13px var(--font-mono); color: var(--ink-soft); }
+
+.step { background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 20px; display: grid; gap: 14px; }
+.step-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.step-no { font: 600 13px var(--font-mono); color: var(--accent); letter-spacing: 0.08em; }
+.step h2 { font: 600 1.25rem/1.2 var(--font-display); margin: 0; }
+.step p { margin: 0; color: var(--ink-soft); max-width: 62ch; }
+.step[aria-disabled="true"] { opacity: 0.55; }
+
+button { font: 600 15px var(--font-body); border-radius: 4px; padding: 10px 18px; cursor: pointer; border: 1px solid var(--ink); background: transparent; color: var(--ink); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+button.big { font-size: 17px; padding: 14px 26px; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+.device { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; font-size: 14px; }
+.device dt { color: var(--ink-soft); }
+.device dd { margin: 0; font-family: var(--font-mono); min-width: 0; overflow-wrap: anywhere; }
+.pill { display: inline-block; font: 500 12px var(--font-mono); padding: 2px 8px; border-radius: 99px; border: 1px solid currentColor; }
+.pill.ok { color: var(--ok); } .pill.warn { color: var(--warn); } .pill.bad { color: var(--bad); }
+
+.progress { height: 10px; border: 1px solid var(--ink); border-radius: 2px; overflow: hidden; background: var(--paper); }
+.progress > div { height: 100%; width: 0; background: var(--accent); transition: width .2s linear; }
+@media (prefers-reduced-motion: reduce) { .progress > div { transition: none; } }
+.status { font-size: 14px; min-height: 1.5em; color: var(--ink-soft); }
+.status.ok { color: var(--ok); } .status.bad { color: var(--bad); }
+
+form { display: grid; gap: 14px; }
+.field { display: grid; gap: 4px; }
+.field label, .lbl { font-weight: 600; font-size: 14px; }
+.hint { font-size: 13px; color: var(--ink-soft); }
+input[type=text], input[type=url], input[type=password], input[type=number], select {
+  font: 15px var(--font-body); padding: 8px 10px; border: 1px solid var(--rule); border-radius: 4px;
+  background: var(--paper); color: var(--ink); width: 100%; min-width: 0;
+}
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
+.nets { display: grid; gap: 8px; }
+.net { display: grid; grid-template-columns: 1.2fr 1fr auto auto; gap: 8px; align-items: center; }
+.net label { font-size: 13px; display: flex; gap: 4px; align-items: center; white-space: nowrap; }
+.net .x { padding: 6px 10px; border-color: var(--rule); }
+@media (max-width: 520px) { .net { grid-template-columns: 1fr 1fr; } }
+.check { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+
+.books { display: grid; gap: 4px; font: 13px var(--font-mono); }
+.books div { display: flex; justify-content: space-between; gap: 8px; }
+.books span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+details.log { background: var(--log-bg); color: var(--log-fg); border-radius: 6px; }
+details.log summary { padding: 10px 16px; cursor: pointer; font: 500 13px var(--font-mono); }
+#log { margin: 0; padding: 0 16px 16px; max-height: 260px; overflow: auto; font: 12px/1.45 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.unsupported { background: var(--sheet); border: 2px solid var(--bad); border-radius: 6px; padding: 16px 20px; }
+code { font-family: var(--font-mono); font-size: 0.92em; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>StickyED Updater</h1>
+    <p class="lede">Plug the reTerminal Sticky into this computer with a USB data cable. This page updates its firmware and sets up the SD card over the same cable.</p>
+    <div class="build" id="build">Firmware in this page: loading…</div>
+  </header>
+
+  <div class="unsupported" id="unsupported" hidden>
+    <strong>This browser can't talk to USB devices.</strong> Open this page in desktop Chrome or Edge. If you opened it by double-clicking and Connect does nothing, serve it locally instead: <code>python3 -m http.server -d sticky-tool 8000</code>, then open <code>http://localhost:8000</code>.
+  </div>
+
+  <section class="step" id="step-connect">
+    <div class="step-head"><span class="step-no">STEP 1</span><h2>Connect</h2></div>
+    <p>Wake the Sticky so it shows its home screen, then choose it in the list. It usually appears as “USB JTAG/serial debug unit”.</p>
+    <div class="row">
+      <button class="primary" id="btn-connect">Connect Sticky</button>
+      <button id="btn-disconnect" hidden>Disconnect</button>
+    </div>
+    <dl class="device" id="device" hidden>
+      <dt>Status</dt><dd id="dev-state">–</dd>
+      <dt>Firmware</dt><dd id="dev-fw">–</dd>
+    </dl>
+  </section>
+
+  <section class="step" id="step-update" aria-disabled="true">
+    <div class="step-head"><span class="step-no">STEP 2</span><h2>Update firmware</h2></div>
+    <p id="update-text">Installs the Sticky × Hermes firmware bundled in this page. Your books, settings and SD card are not touched.</p>
+    <label class="check"><input type="checkbox" id="opt-erase"> Erase the device first (use this if it won't start after an update)</label>
+    <div class="row"><button class="primary big" id="btn-update" disabled>Update</button></div>
+    <div class="progress" aria-hidden="true"><div id="bar"></div></div>
+    <div class="status" id="update-status" role="status"></div>
+  </section>
+
+  <section class="step" id="step-sd" aria-disabled="true">
+    <div class="step-head"><span class="step-no">STEP 3</span><h2>SD card setup</h2></div>
+    <p>Writes <code>/hermes/config.json</code> to the card inside the Sticky. It takes effect right away: Wi-Fi passwords move into the Sticky's own store and are removed from the file.</p>
+    <form id="cfg" novalidate>
+      <div class="grid2">
+        <div class="field">
+          <label for="f-bridge">Bridge address</label>
+          <input type="url" id="f-bridge" placeholder="http://192.168.1.20:8787" autocomplete="off">
+          <span class="hint">The computer running sticky-bridge, as seen from your Wi-Fi.</span>
+        </div>
+        <div class="field">
+          <label for="f-token">Bridge token</label>
+          <input type="password" id="f-token" autocomplete="off">
+          <span class="hint">Same as <code>token</code> in bridge.toml.</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <span class="lbl">Wi-Fi networks</span>
+        <span class="hint">Tick “home” for networks the Sticky may sync on. Leave a password blank to keep the one already saved on the device.</span>
+        <div class="nets" id="nets"></div>
+        <div><button type="button" id="btn-addnet">Add network</button></div>
+      </div>
+
+      <div class="grid2">
+        <div class="field">
+          <label for="f-refresh">Refresh every (minutes)</label>
+          <input type="number" id="f-refresh" min="5" max="1440" value="30">
+        </div>
+        <div class="field">
+          <label for="f-gain">Microphone gain</label>
+          <select id="f-gain">
+            <option value="2">2 · loud room / close talking</option>
+            <option value="4" selected>4 · normal</option>
+            <option value="6">6</option>
+            <option value="8">8 · quiet voice</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="f-maxrec">Longest voice note (seconds)</label>
+          <input type="number" id="f-maxrec" min="5" max="600" value="90">
+        </div>
+        <div class="field">
+          <label for="f-orient">Dashboard orientation</label>
+          <select id="f-orient">
+            <option value="landscape" selected>Landscape</option>
+            <option value="portrait">Portrait</option>
+          </select>
+        </div>
+      </div>
+      <label class="check"><input type="checkbox" id="f-home" checked> Use the Hermes dashboard as the home screen</label>
+      <div class="row">
+        <button type="submit" class="primary" id="btn-write" disabled>Write to Sticky</button>
+        <button type="button" id="btn-load" disabled>Load from Sticky</button>
+      </div>
+      <div class="status" id="cfg-status" role="status"></div>
+    </form>
+  </section>
+
+  <section class="step" id="step-books" aria-disabled="true">
+    <div class="step-head"><span class="step-no">STEP 4</span><h2>Add books</h2><span class="hint">optional</span></div>
+    <p>Copies EPUB, TXT or XTC files into <code>/Books</code> on the card. About 100 KB/s over USB, so a novel takes a few seconds.</p>
+    <div class="row">
+      <input type="file" id="f-books" multiple accept=".epub,.txt,.xtc,.xtch">
+      <button class="primary" id="btn-books" disabled>Copy to Sticky</button>
+    </div>
+    <div class="books" id="book-list"></div>
+    <div class="status" id="books-status" role="status"></div>
+  </section>
+
+  <details class="log" id="logbox">
+    <summary>Device log</summary>
+    <pre id="log"></pre>
+    <div class="row" style="padding: 0 16px 16px"><button type="button" id="btn-copylog" style="color:var(--log-fg);border-color:var(--log-fg)">Copy log</button><button type="button" id="btn-restart" style="color:var(--log-fg);border-color:var(--log-fg)" disabled>Restart Sticky</button></div>
+  </details>
+</main>
+
+<script src="firmware.js"></script>
+<script type="module">
+import { ESPLoader, Transport } from "https://cdn.jsdelivr.net/npm/esptool-js@0.6.1/bundle.js";
+
+const $ = (id) => document.getElementById(id);
+const FW = window.STICKY_FIRMWARE;
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ---------------------------------------------------------------- log
+const logEl = $("log");
+let logText = "";
+function log(line) {
+  logText += line.endsWith("\n") ? line : line + "\n";
+  if (logText.length > 200000) logText = logText.slice(-150000);
+  logEl.textContent = logText;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ---------------------------------------------------------------- firmware blob
+let firmware = null;
+if (FW) {
+  const bin = atob(FW.base64);
+  firmware = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) firmware[i] = bin.charCodeAt(i);
+  $("build").textContent = `Firmware in this page: ${FW.version} · built ${FW.builtAt} · ${(firmware.length / 1048576).toFixed(1)} MB`;
+} else {
+  $("build").textContent = "firmware.js is missing next to this page, so updating is unavailable.";
+}
+
+if (!("serial" in navigator)) {
+  $("unsupported").hidden = false;
+  $("btn-connect").disabled = true;
+}
+
+// ---------------------------------------------------------------- CRC32 (same as esp_rom_crc32_le from 0)
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+  return t;
+})();
+function crc32(bytes, crc = 0) {
+  crc = ~crc >>> 0;
+  for (let i = 0; i < bytes.length; i++) crc = CRC_TABLE[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
+  return ~crc >>> 0;
+}
+const le32 = (v) => new Uint8Array([v & 255, (v >>> 8) & 255, (v >>> 16) & 255, (v >>> 24) & 255]);
+const le16 = (v) => new Uint8Array([v & 255, (v >>> 8) & 255]);
+
+// ---------------------------------------------------------------- CrossInk USB-serial file protocol
+// "CMND" + op + [u16 path len][path] ... Replies are text lines (READY / OK / ERR:x / STATUS:..)
+// interleaved with the firmware's own log output, plus 0x06 ACK bytes during uploads.
+class StickyLink {
+  constructor(port) { this.port = port; this.q = new Uint8Array(0); this.head = 0; this.wake = null; this.busy = false; this.pendingLog = ""; }
+  async open() {
+    await this.port.open({ baudRate: 115200, bufferSize: 65536 });
+    this.writer = this.port.writable.getWriter();
+    this.reader = this.port.readable.getReader();
+    this.closed = false;
+    this.pump();
+  }
+  async pump() {
+    try {
+      while (true) {
+        const { value, done } = await this.reader.read();
+        if (done) break;
+        if (!value) continue;
+        if (this.busy) {
+          const rest = this.q.subarray(this.head);
+          const merged = new Uint8Array(rest.length + value.length);
+          merged.set(rest); merged.set(value, rest.length);
+          this.q = merged; this.head = 0;
+          if (this.wake) { const w = this.wake; this.wake = null; w(); }
+        } else {
+          this.pendingLog += dec.decode(value, { stream: true });
+          const lines = this.pendingLog.split("\n");
+          this.pendingLog = lines.pop();
+          for (const l of lines) log(l.replace(/\r$/, ""));
+        }
+      }
+    } catch (e) {
+      if (!this.closed) log(`[serial] ${e.message}`);
+    }
+  }
+  async close() {
+    this.closed = true;
+    try { await this.reader.cancel(); } catch {}
+    try { this.reader.releaseLock(); } catch {}
+    try { this.writer.releaseLock(); } catch {}
+    try { await this.port.close(); } catch {}
+  }
+  async byte(deadline) {
+    while (this.head >= this.q.length) {
+      const left = deadline - Date.now();
+      if (left <= 0) throw new Error("The Sticky stopped answering");
+      await new Promise((r) => { this.wake = r; setTimeout(r, Math.min(left, 200)); });
+    }
+    return this.q[this.head++];
+  }
+  // Reads until a protocol line (or an ACK if wantAck); other lines go to the log.
+  async reply(timeoutMs, { wantAck = false } = {}) {
+    let deadline = Date.now() + timeoutMs;
+    let line = [];
+    while (true) {
+      const b = await this.byte(deadline);
+      if (wantAck && b === 0x06 && line.length === 0) return "ACK";
+      if (b === 0x0a) {
+        const text = dec.decode(new Uint8Array(line)).replace(/\r$/, "");
+        line = [];
+        if (/^(READY|OK|ERR:|STATUS:)/.test(text)) return text;
+        if (text.startsWith("BUSY:")) { deadline = Date.now() + timeoutMs; continue; }
+        if (text) log(text);
+      } else {
+        line.push(b);
+      }
+    }
+  }
+  async bytes(n, timeoutMs) {
+    const out = new Uint8Array(n);
+    const deadline = Date.now() + timeoutMs;
+    for (let i = 0; i < n; i++) out[i] = await this.byte(deadline);
+    return out;
+  }
+  async send(...parts) { for (const p of parts) await this.writer.write(typeof p === "string" ? enc.encode(p) : p); }
+  async run(fn) {
+    while (this.busy) await sleep(20);
+    this.busy = true; this.q = new Uint8Array(0); this.head = 0;
+    try { return await fn(); } finally { this.busy = false; }
+  }
+  explain(err) {
+    const map = {
+      "ERR:not_on_home": "Go to the Sticky's home screen (swipe up from the bottom edge), then try again.",
+      "ERR:protected_path": "The Sticky refused that location.",
+      "ERR:mkdir_failed": "Couldn't create the folder. Is an SD card inserted?",
+      "ERR:fopen": "Couldn't open the file on the SD card. Is a card inserted?",
+    };
+    const key = Object.keys(map).find((k) => err.startsWith(k));
+    return key ? map[key] : `The Sticky answered ${err}`;
+  }
+  status() {
+    return this.run(async () => {
+      await this.send("CMND", "S");
+      const r = await this.reply(3000);
+      if (!r.startsWith("STATUS:")) throw new Error(this.explain(r));
+      return Object.fromEntries(r.slice(7).split(",").map((kv) => kv.split("=")));
+    });
+  }
+  writeFile(path, data, onProgress) {
+    return this.run(async () => {
+      const p = enc.encode(path);
+      await this.send("CMND", "W", le16(p.length), p, le32(data.length));
+      let r = await this.reply(10000);
+      if (r !== "READY") throw new Error(this.explain(r));
+      for (let off = 0; off < data.length; off += 256) {
+        const chunk = data.subarray(off, Math.min(off + 256, data.length));
+        await this.send(chunk);
+        const last = off + 256 >= data.length;
+        if (!last) {
+          r = await this.reply(45000, { wantAck: true });
+          if (r !== "ACK") throw new Error(this.explain(r));
+        }
+        if (onProgress && (off & 0x3fff) === 0) onProgress(off + chunk.length, data.length);
+      }
+      if (data.length > 0) {
+        r = await this.reply(45000, { wantAck: true });
+        if (r !== "ACK") throw new Error(this.explain(r));
+      }
+      await this.send(le32(crc32(data)));
+      r = await this.reply(15000);
+      if (r !== "OK") throw new Error(this.explain(r));
+      onProgress && onProgress(data.length, data.length);
+    });
+  }
+  readFile(path) {
+    return this.run(async () => {
+      const p = enc.encode(path);
+      await this.send("CMND", "T", le16(p.length), p);
+      const r = await this.reply(5000);
+      if (r !== "READY") throw new Error(this.explain(r));
+      const sz = await this.bytes(4, 5000);
+      const n = sz[0] | (sz[1] << 8) | (sz[2] << 16) | (sz[3] << 24);
+      if (n > 1 << 20) throw new Error("Unexpected file size");
+      const data = await this.bytes(n, 10000);
+      const c = await this.bytes(4, 5000);
+      const crc = (c[0] | (c[1] << 8) | (c[2] << 16) | (c[3] << 24)) >>> 0;
+      if (crc !== crc32(data)) throw new Error("The file arrived damaged (log output mixed in). Try again.");
+      return data;
+    });
+  }
+  async restart() {
+    await this.port.setSignals({ dataTerminalReady: false, requestToSend: true });
+    await sleep(120);
+    await this.port.setSignals({ dataTerminalReady: false, requestToSend: false });
+  }
+}
+
+// ---------------------------------------------------------------- UI state
+let port = null;
+let link = null;
+let deviceFw = null;
+
+function setStep(id, enabled) { $(id).setAttribute("aria-disabled", enabled ? "false" : "true"); }
+function setStatus(id, text, kind = "") { const el = $(id); el.textContent = text; el.className = "status" + (kind ? " " + kind : ""); }
+function setBusy(b) {
+  for (const id of ["btn-update", "btn-write", "btn-load", "btn-books", "btn-restart"]) $(id).disabled = b || !port;
+  $("btn-books").disabled = b || !port || !$("f-books").files.length;
+}
+
+function renderDevice(state, fwText) {
+  $("device").hidden = false;
+  $("dev-state").innerHTML = state;
+  $("dev-fw").textContent = fwText;
+  const same = FW && deviceFw && deviceFw === FW.version;
+  $("btn-update").textContent = same ? "Reinstall" : "Update";
+  $("update-text").textContent = !FW ? "No firmware bundled with this page."
+    : same ? `The Sticky already runs ${FW.version}. You can reinstall it if something is wrong.`
+    : deviceFw ? `Updates the Sticky from ${deviceFw} to ${FW.version}. Your books, settings and SD card are not touched.`
+    : `Installs ${FW.version}. Your books and SD card are not touched.`;
+}
+
+async function openLink() {
+  link = new StickyLink(port);
+  await link.open();
+  setBusy(false);
+  $("btn-restart").disabled = false;
+  try {
+    const st = await link.status();
+    deviceFw = st.firmware;
+    renderDevice('<span class="pill ok">connected</span>', `${st.firmware} (${st.device})`);
+    setStep("step-sd", true); setStep("step-books", true);
+    loadConfig(true);
+  } catch (e) {
+    deviceFw = null;
+    const msg = /home screen/.test(e.message) ? "Open its home screen to set up the SD card" : "Running other firmware, or still starting";
+    renderDevice(`<span class="pill warn">connected</span> ${msg}`, "unknown");
+    log(`[updater] status: ${e.message}`);
+  }
+  setStep("step-update", !!FW);
+}
+
+$("btn-connect").addEventListener("click", async () => {
+  try {
+    port = await navigator.serial.requestPort();
+  } catch { return; } // picker closed
+  $("btn-connect").hidden = true; $("btn-disconnect").hidden = false;
+  try { await openLink(); } catch (e) {
+    renderDevice('<span class="pill bad">not available</span>', "–");
+    log(`[updater] ${e.message}`);
+    setStatus("update-status", "Couldn't open the port. Close other apps using it (Arduino, another tab, a serial monitor) and reconnect.", "bad");
+  }
+  setStep("step-update", !!FW);
+  $("btn-update").disabled = !FW;
+});
+
+$("btn-disconnect").addEventListener("click", async () => {
+  if (link) await link.close();
+  link = null; port = null; deviceFw = null;
+  $("device").hidden = true; $("btn-connect").hidden = false; $("btn-disconnect").hidden = true;
+  for (const s of ["step-update", "step-sd", "step-books"]) setStep(s, false);
+  setBusy(true);
+});
+
+// ---------------------------------------------------------------- firmware update
+$("btn-update").addEventListener("click", async () => {
+  if (!firmware || !port) return;
+  setBusy(true);
+  $("bar").style.width = "0%";
+  setStatus("update-status", "Restarting the Sticky into update mode…");
+  if (link) { await link.close(); link = null; }
+  const terminal = { clean() {}, writeLine: (d) => log(`[esptool] ${d}`), write: (d) => log(`[esptool] ${d}`) };
+  let transport;
+  try {
+    transport = new Transport(port, false);
+    const loader = new ESPLoader({ transport, baudrate: 921600, terminal, debugLogging: false });
+    const chip = await loader.main();
+    if (!/ESP32-S3/i.test(chip)) throw new Error(`This is a ${chip}, not a Sticky (ESP32-S3).`);
+    setStatus("update-status", $("opt-erase").checked ? "Erasing… (about 30 seconds)" : "Writing firmware…");
+    await loader.writeFlash({
+      fileArray: [{ data: firmware, address: 0x0 }],
+      flashMode: "keep", flashFreq: "keep", flashSize: "keep",
+      eraseAll: $("opt-erase").checked, compress: true,
+      reportProgress: (_i, written, total) => {
+        const pct = Math.round((written / total) * 100);
+        $("bar").style.width = pct + "%";
+        setStatus("update-status", `Writing firmware… ${pct}%`);
+      },
+    });
+    setStatus("update-status", "Restarting the Sticky…");
+    await loader.after("hard_reset");
+    await transport.disconnect();
+    transport = null;
+    $("bar").style.width = "100%";
+    setStatus("update-status", `Done. The Sticky is starting ${FW.version}. If its screen hasn't changed in about 10 seconds, unplug the USB cable and plug it back in.`, "ok");
+    await sleep(6000);
+    try { await openLink(); } catch (e) { log(`[updater] reconnect: ${e.message}`); renderDevice('<span class="pill warn">restarting</span> Click Disconnect, then Connect again', "–"); }
+  } catch (e) {
+    log(`[updater] ${e.stack || e.message}`);
+    setStatus("update-status", `Update failed: ${e.message}. Unplug and replug the Sticky, then Connect and try again. If it keeps failing, hold the Up button while plugging in.`, "bad");
+    if (transport) { try { await transport.disconnect(); } catch {} }
+    try { await openLink(); } catch {}
+  } finally {
+    setBusy(false);
+  }
+});
+
+// ---------------------------------------------------------------- config form
+const REMEMBER_KEY = "sticky-updater-form";
+function netRow(ssid = "", home = true) {
+  const row = document.createElement("div");
+  row.className = "net";
+  const n = document.querySelectorAll(".net").length;
+  row.innerHTML = `<input type="text" placeholder="Network name (SSID)" aria-label="Network name" id="net-ssid-${n}">
+    <input type="password" placeholder="Password" aria-label="Password" autocomplete="off" id="net-pass-${n}">
+    <label><input type="checkbox" id="net-home-${n}"> home</label>
+    <button type="button" class="x" aria-label="Remove network">Remove</button>`;
+  row.querySelector('input[type=text]').value = ssid;
+  row.querySelector('input[type=checkbox]').checked = home;
+  row.querySelector(".x").addEventListener("click", () => row.remove());
+  $("nets").appendChild(row);
+}
+$("btn-addnet").addEventListener("click", () => netRow());
+
+function fillForm(cfg) {
+  if (cfg.bridgeUrl !== undefined) $("f-bridge").value = cfg.bridgeUrl;
+  if (cfg.token) $("f-token").value = cfg.token;
+  if (cfg.refreshMinutes) $("f-refresh").value = cfg.refreshMinutes;
+  if (cfg.maxRecordSeconds) $("f-maxrec").value = cfg.maxRecordSeconds;
+  if (cfg.micGain) {
+    const sel = $("f-gain");
+    if (![...sel.options].some((o) => o.value === String(cfg.micGain))) sel.add(new Option(String(cfg.micGain), String(cfg.micGain)));
+    sel.value = String(cfg.micGain);
+  }
+  if (cfg.dashboardLandscape !== undefined) $("f-orient").value = cfg.dashboardLandscape ? "landscape" : "portrait";
+  if (cfg.dashboardHome !== undefined) $("f-home").checked = !!cfg.dashboardHome;
+  if (Array.isArray(cfg.homeNetworks) && cfg.homeNetworks.length) {
+    $("nets").innerHTML = "";
+    for (const s of cfg.homeNetworks) netRow(s, true);
+  }
+}
+
+function readForm() {
+  const nets = [...document.querySelectorAll(".net")].map((r) => ({
+    ssid: r.querySelector("input[type=text]").value.trim(),
+    password: r.querySelector("input[type=password]").value,
+    home: r.querySelector("input[type=checkbox]").checked,
+  })).filter((n) => n.ssid);
+  let url = $("f-bridge").value.trim().replace(/\/+$/, "");
+  if (url && !/^https?:\/\//.test(url)) url = "http://" + url;
+  return {
+    bridgeUrl: url,
+    token: $("f-token").value,
+    homeNetworks: nets.filter((n) => n.home).map((n) => n.ssid),
+    networks: nets.filter((n) => n.password).map((n) => ({ ssid: n.ssid, password: n.password })),
+    refreshMinutes: Math.min(1440, Math.max(5, parseInt($("f-refresh").value, 10) || 30)),
+    dashboardHome: $("f-home").checked,
+    dashboardLandscape: $("f-orient").value === "landscape",
+    maxRecordSeconds: Math.min(600, Math.max(5, parseInt($("f-maxrec").value, 10) || 90)),
+    micGain: parseInt($("f-gain").value, 10) || 4,
+  };
+}
+
+async function loadConfig(quiet) {
+  if (!link) return;
+  try {
+    const data = await link.readFile("/hermes/config.json");
+    fillForm(JSON.parse(dec.decode(data)));
+    if (!quiet) setStatus("cfg-status", "Loaded the settings that are on the Sticky.", "ok");
+  } catch (e) {
+    if (!quiet) setStatus("cfg-status", /fopen/.test(e.message) ? "No settings on the card yet." : e.message, "bad");
+  }
+}
+$("btn-load").addEventListener("click", () => loadConfig(false));
+
+$("cfg").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  if (!link) return;
+  const cfg = readForm();
+  if (!cfg.bridgeUrl) { setStatus("cfg-status", "Enter the bridge address first.", "bad"); $("f-bridge").focus(); return; }
+  setBusy(true);
+  setStatus("cfg-status", "Writing to the SD card…");
+  try {
+    await link.writeFile("/hermes/config.json", enc.encode(JSON.stringify(cfg, null, 2) + "\n"));
+    setStatus("cfg-status", `Saved. ${cfg.networks.length ? "Wi-Fi passwords were moved into the Sticky. " : ""}The dashboard will sync now.`, "ok");
+    for (const r of document.querySelectorAll(".net input[type=password]")) r.value = "";
+    $("f-bridge").value = cfg.bridgeUrl;
+    try { localStorage.setItem(REMEMBER_KEY, JSON.stringify({ ...cfg, token: undefined, networks: undefined })); } catch {}
+  } catch (e) {
+    setStatus("cfg-status", e.message, "bad");
+  } finally { setBusy(false); }
+});
+
+// ---------------------------------------------------------------- books
+function renderBooks() {
+  const files = [...$("f-books").files];
+  $("book-list").innerHTML = "";
+  for (const f of files) {
+    const d = document.createElement("div");
+    d.innerHTML = `<span></span><span>${(f.size / 1048576).toFixed(1)} MB</span>`;
+    d.firstChild.textContent = f.name;
+    $("book-list").appendChild(d);
+  }
+  $("btn-books").disabled = !files.length || !link;
+}
+$("f-books").addEventListener("change", renderBooks);
+$("btn-books").addEventListener("click", async () => {
+  const files = [...$("f-books").files];
+  if (!files.length || !link) return;
+  setBusy(true);
+  let done = 0;
+  try {
+    for (const f of files) {
+      const safe = f.name.replace(/[\\/:*?"<>|]/g, "_");
+      const data = new Uint8Array(await f.arrayBuffer());
+      await link.writeFile(`/Books/${safe}`, data, (w, t) =>
+        setStatus("books-status", `Copying ${f.name}… ${Math.round((w / t) * 100)}%  (${done + 1} of ${files.length})`));
+      done++;
+    }
+    setStatus("books-status", `Copied ${done} ${done === 1 ? "book" : "books"} to /Books.`, "ok");
+  } catch (e) {
+    setStatus("books-status", `${e.message} (${done} of ${files.length} copied)`, "bad");
+  } finally { setBusy(false); renderBooks(); }
+});
+
+// ---------------------------------------------------------------- misc
+$("btn-copylog").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(logText); $("btn-copylog").textContent = "Copied"; }
+  catch { const r = document.createRange(); r.selectNodeContents(logEl); getSelection().removeAllRanges(); getSelection().addRange(r); }
+});
+$("btn-restart").addEventListener("click", async () => { if (link) { await link.restart(); log("[updater] restart requested"); } });
+
+try { const saved = JSON.parse(localStorage.getItem(REMEMBER_KEY) || "null"); if (saved) fillForm(saved); } catch {}
+if (!document.querySelector(".net")) netRow();
+setBusy(true);
+</script>
+</body>
+</html>
