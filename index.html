@@ -448,7 +448,14 @@ async function openLink() {
   setBusy(false);
   $("btn-restart").disabled = false;
   try {
-    const st = await link.status();
+    // Opening the port can restart the Sticky through its USB chip; give it up
+    // to ~12 s to boot before deciding it isn't answering.
+    let st = null, lastErr = null;
+    renderDevice('<span class="pill warn">starting</span> Waiting for the Sticky…', "–");
+    for (let i = 0; i < 6 && !st; i++) {
+      try { st = await link.status(); } catch (e) { lastErr = e; if (/home screen/.test(e.message)) break; await sleep(1500); }
+    }
+    if (!st) throw lastErr || new Error("The Sticky stopped answering");
     deviceFw = st.firmware;
     renderDevice('<span class="pill ok">connected</span>', `${st.firmware} (${st.device})`);
     setStep("step-sd", true); setStep("step-books", true);
