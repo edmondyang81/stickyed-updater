@@ -165,8 +165,8 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 
       <div class="grid2">
         <div class="field">
-          <label for="f-refresh">Refresh every (minutes)</label>
-          <input type="number" id="f-refresh" min="5" max="1440" value="30">
+          <label for="f-refresh">Sync every (minutes)</label>
+          <input type="number" id="f-refresh" min="5" max="1440" value="15">
         </div>
         <div class="field">
           <label for="f-gain">Microphone gain</label>
@@ -575,7 +575,8 @@ function readForm() {
     token: $("f-token").value,
     homeNetworks: nets.filter((n) => n.home).map((n) => n.ssid),
     networks: nets.filter((n) => n.password).map((n) => ({ ssid: n.ssid, password: n.password })),
-    refreshMinutes: Math.min(1440, Math.max(5, parseInt($("f-refresh").value, 10) || 30)),
+    configVersion: 2,
+    refreshMinutes: Math.min(1440, Math.max(5, parseInt($("f-refresh").value, 10) || 15)),
     dashboardHome: $("f-home").checked,
     dashboardLandscape: $("f-orient").value === "landscape",
     maxRecordSeconds: Math.min(600, Math.max(5, parseInt($("f-maxrec").value, 10) || 90)),
