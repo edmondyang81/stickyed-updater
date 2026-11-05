@@ -184,8 +184,8 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
         <div class="field">
           <label for="f-orient">Dashboard orientation</label>
           <select id="f-orient">
-            <option value="landscape" selected>Landscape</option>
-            <option value="portrait">Portrait</option>
+            <option value="portrait" selected>Portrait (upright)</option>
+            <option value="landscape">Landscape (sideways)</option>
           </select>
         </div>
       </div>
@@ -621,13 +621,12 @@ $("cfg").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   if (!link) return;
   const cfg = readForm();
-  if (!cfg.bridgeUrl) { setStatus("cfg-status", "Enter the bridge address first.", "bad"); $("f-bridge").focus(); return; }
   setBusy(true);
   setStatus("cfg-status", "Writing to the SD card…");
   try {
     cfg.setClockUtc = Math.round(Date.now() / 1000);  // as late as possible
     await link.writeFile("/hermes/config.json", enc.encode(JSON.stringify(cfg, null, 2) + "\n"));
-    setStatus("cfg-status", `Saved, and the clock is set. ${cfg.networks.length ? "Wi-Fi passwords were moved into the Sticky. " : ""}The dashboard will sync now.`, "ok");
+    setStatus("cfg-status", `Saved, and the clock is set. ${cfg.bridgeUrl ? "" : "No bridge address yet, so weather and tasks stay empty until you add one. "}${cfg.networks.length ? "Wi-Fi passwords were moved into the Sticky. " : ""}The dashboard will sync now.`, "ok");
     for (const r of document.querySelectorAll(".net input[type=password]")) r.value = "";
     $("f-bridge").value = cfg.bridgeUrl;
     try { localStorage.setItem(REMEMBER_KEY, JSON.stringify({ ...cfg, token: undefined, networks: undefined, setClockUtc: undefined })); } catch {}
