@@ -39,6 +39,8 @@
   --log-bg: #0e1110; --log-fg: #c3ccc8; color-scheme: dark;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
+.seg { justify-self: start; }
 html, body { margin: 0; }
 body {
   background: var(--paper); color: var(--ink); font: 15px/1.5 var(--font-body);
@@ -98,6 +100,18 @@ input[type=text], input[type=url], input[type=password], input[type=number], sel
 .books div { display: flex; justify-content: space-between; gap: 8px; }
 .books span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+.covers { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: start; border-top: 1px solid var(--rule); padding-top: 16px; }
+@media (max-width: 560px) { .covers { grid-template-columns: 1fr; } }
+.covers h3 { font: 600 1.05rem/1.2 var(--font-display); margin: 0 0 4px; }
+.cover-controls { display: grid; gap: 12px; min-width: 0; }
+.seg { display: inline-flex; border: 1px solid var(--ink); border-radius: 4px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; padding: 7px 14px; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+.symbols { display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 6px; }
+.symbols button { font-size: 22px; padding: 6px 0; line-height: 1.2; border-color: var(--rule); }
+.symbols button[aria-pressed="true"] { border: 2px solid var(--accent); }
+.preview-wrap { display: grid; gap: 6px; justify-items: center; }
+#cover-preview { width: 150px; height: 225px; border: 1px solid var(--ink); background: #fff; image-rendering: auto; }
 details.log { background: var(--log-bg); color: var(--log-fg); border-radius: 6px; }
 details.log summary { padding: 10px 16px; cursor: pointer; font: 500 13px var(--font-mono); }
 #log { margin: 0; padding: 0 16px 16px; max-height: 260px; overflow: auto; font: 12px/1.45 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -209,6 +223,55 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
     </div>
     <div class="books" id="book-list"></div>
     <div class="status" id="books-status" role="status"></div>
+
+    <div class="covers">
+      <div class="cover-controls">
+        <div>
+          <h3>Book covers</h3>
+          <p>Give any book on the Sticky its own cover on the home screen: a picture, or a design with a symbol.</p>
+        </div>
+        <div class="field">
+          <label for="cover-book">Book</label>
+          <select id="cover-book"><option value="">Connect to list the books on the Sticky</option></select>
+        </div>
+        <div class="seg" role="group" aria-label="Cover type">
+          <button type="button" id="mode-picture" aria-pressed="true">Picture</button>
+          <button type="button" id="mode-design" aria-pressed="false">Design</button>
+        </div>
+        <div id="pane-picture" class="field">
+          <label for="cover-image">Picture</label>
+          <input type="file" id="cover-image" accept="image/*">
+          <span class="hint">Any photo or image. It's cropped to a book shape and tuned for e-ink.</span>
+        </div>
+        <div id="pane-design" class="field" hidden>
+          <span class="lbl">Symbol</span>
+          <div class="symbols" id="symbols"></div>
+          <div class="grid2">
+            <div class="field">
+              <label for="cover-title">Title on the cover</label>
+              <input type="text" id="cover-title" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="cover-style">Style</label>
+              <select id="cover-style">
+                <option value="dark">Dark</option>
+                <option value="light">Light</option>
+                <option value="framed">Framed</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="row">
+          <button type="button" class="primary" id="btn-cover" disabled>Set cover</button>
+          <button type="button" id="btn-cover-reset" disabled>Use the book's own cover</button>
+        </div>
+        <div class="status" id="cover-status" role="status"></div>
+      </div>
+      <div class="preview-wrap">
+        <canvas id="cover-preview" width="240" height="360" aria-label="Cover preview"></canvas>
+        <span class="hint">Preview</span>
+      </div>
+    </div>
   </section>
 
   <details class="log" id="logbox">
@@ -395,6 +458,41 @@ class StickyLink {
       onProgress && onProgress(data.length, data.length);
     });
   }
+  // Lists a folder: [{name, dir, size}]. Missing folder -> [].
+  list(path) {
+    return this.run(async () => {
+      const p = enc.encode(path);
+      await this.send("CMND", "A", le16(p.length), p);
+      const out = [];
+      const deadline = Date.now() + 8000;
+      let line = [];
+      let started = false;
+      while (true) {
+        const b = await this.byte(deadline);
+        if (b !== 0x0a) { line.push(b); continue; }
+        const t = dec.decode(new Uint8Array(line)).replace(/\r$/, "");
+        line = [];
+        if (t.startsWith("ERR:")) {
+          if (/opendir|not_directory/.test(t)) return [];
+          throw new Error(this.explain(t));
+        }
+        if (t.startsWith("DIR:")) { started = true; continue; }
+        if (!started) { if (t) log(t); continue; }
+        if (t === "END") return out;
+        const m = t.match(/^([df])\|([^|]*)(?:\|(\d+))?/);
+        if (m) out.push({ name: m[2], dir: m[1] === "d", size: Number(m[3] || 0) });
+        else if (t) log(t);
+      }
+    });
+  }
+  remove(path) {
+    return this.run(async () => {
+      const p = enc.encode(path);
+      await this.send("CMND", "R", le16(p.length), p);
+      const r = await this.reply(8000);
+      if (r !== "OK" && !r.startsWith("ERR:not_found")) throw new Error(this.explain(r));
+    });
+  }
   readFile(path) {
     return this.run(async () => {
       const p = enc.encode(path);
@@ -426,7 +524,7 @@ let deviceFw = null;
 function setStep(id, enabled) { $(id).setAttribute("aria-disabled", enabled ? "false" : "true"); }
 function setStatus(id, text, kind = "") { const el = $(id); el.textContent = text; el.className = "status" + (kind ? " " + kind : ""); }
 function setBusy(b) {
-  for (const id of ["btn-update", "btn-write", "btn-load", "btn-clock", "btn-books", "btn-restart"]) $(id).disabled = b || !port;
+  for (const id of ["btn-update", "btn-write", "btn-load", "btn-clock", "btn-books", "btn-restart", "btn-cover", "btn-cover-reset"]) $(id).disabled = b || !port;
   $("btn-books").disabled = b || !port || !$("f-books").files.length;
 }
 
@@ -459,7 +557,8 @@ async function openLink() {
     deviceFw = st.firmware;
     renderDevice('<span class="pill ok">connected</span>', `${st.firmware} (${st.device})`);
     setStep("step-sd", true); setStep("step-books", true);
-    loadConfig(true);
+    await loadConfig(true);
+    refreshCoverBooks();
   } catch (e) {
     deviceFw = null;
     const msg = /home screen/.test(e.message) ? "Open its home screen to set up the SD card" : "Asleep, starting, or running other firmware. Hold the side button ~2 s, then Disconnect and Connect again";
@@ -679,10 +778,202 @@ $("btn-books").addEventListener("click", async () => {
       done++;
     }
     setStatus("books-status", `Copied ${done} ${done === 1 ? "book" : "books"} to /Books.`, "ok");
+    refreshCoverBooks();
   } catch (e) {
     setStatus("books-status", `${e.message} (${done} of ${files.length} copied)`, "bad");
   } finally { setBusy(false); renderBooks(); }
 });
+
+// ---------------------------------------------------------------- covers
+const BOOK_RE = /\.(epub|txt|xtc|xtch)$/i;
+const stemOf = (name) => name.replace(/^.*\//, "").replace(/\.[^.]+$/, "");
+async function refreshCoverBooks() {
+  if (!link) return;
+  const sel = $("cover-book");
+  const keep = sel.value;
+  try {
+    const found = [];
+    for (const dir of ["/Books", "/"]) {
+      for (const e of await link.list(dir)) {
+        if (!e.dir && BOOK_RE.test(e.name) && !e.name.startsWith(".")) found.push((dir === "/" ? "/" : dir + "/") + e.name);
+      }
+    }
+    sel.innerHTML = "";
+    if (!found.length) sel.add(new Option("No books on the Sticky yet", ""));
+    for (const p of found.sort((a, b) => stemOf(a).localeCompare(stemOf(b)))) sel.add(new Option(stemOf(p), p));
+    if ([...sel.options].some((o) => o.value === keep)) sel.value = keep;
+    onCoverBookChange();
+  } catch (e) {
+    log(`[updater] book list: ${e.message}`);
+  }
+}
+
+const SYMBOLS = ["📖", "🐉", "🐒", "☯️", "⭐", "🌙", "☀️", "🌊", "🌲", "🏔️", "⚓", "🚀", "🧭", "🗝️", "🕰️", "🎭", "♞", "✿", "🦊", "🐋", "🍵", "🔥", "❄️", "🌸"];
+let coverMode = "picture";
+let coverSymbol = "📖";
+let coverImage = null;
+
+function setMode(mode) {
+  coverMode = mode;
+  $("mode-picture").setAttribute("aria-pressed", mode === "picture");
+  $("mode-design").setAttribute("aria-pressed", mode === "design");
+  $("pane-picture").hidden = mode !== "picture";
+  $("pane-design").hidden = mode !== "design";
+  drawCover();
+}
+$("mode-picture").addEventListener("click", () => setMode("picture"));
+$("mode-design").addEventListener("click", () => setMode("design"));
+for (const sym of SYMBOLS) {
+  const b = document.createElement("button");
+  b.type = "button"; b.textContent = sym; b.setAttribute("aria-pressed", sym === coverSymbol);
+  b.setAttribute("aria-label", `Symbol ${sym}`);
+  b.addEventListener("click", () => {
+    coverSymbol = sym;
+    for (const o of $("symbols").children) o.setAttribute("aria-pressed", o === b);
+    drawCover();
+  });
+  $("symbols").appendChild(b);
+}
+function onCoverBookChange() {
+  const p = $("cover-book").value;
+  if (p) $("cover-title").value = stemOf(p).replace(/_/g, " ");
+  drawCover();
+}
+$("cover-book").addEventListener("change", onCoverBookChange);
+$("cover-title").addEventListener("input", drawCover);
+$("cover-style").addEventListener("change", drawCover);
+$("cover-image").addEventListener("change", async () => {
+  const f = $("cover-image").files[0];
+  if (!f) return;
+  try { coverImage = await createImageBitmap(f); } catch { coverImage = null; setStatus("cover-status", "That file isn't an image this browser can read.", "bad"); }
+  drawCover();
+});
+
+function wrapLines(ctx, text, maxW, maxLines) {
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines = [];
+  let cur = "";
+  for (const w of words) {
+    const t = cur ? cur + " " + w : w;
+    if (ctx.measureText(t).width <= maxW || !cur) cur = t; else { lines.push(cur); cur = w; }
+  }
+  if (cur) lines.push(cur);
+  if (lines.length > maxLines) { lines.length = maxLines; lines[maxLines - 1] = lines[maxLines - 1].replace(/\s*\S*$/, "") + "…"; }
+  return lines;
+}
+
+// Draws the 240x360 cover into the preview canvas (what gets sent).
+function drawCover() {
+  const c = $("cover-preview");
+  const ctx = c.getContext("2d");
+  const W = c.width, H = c.height;
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
+  if (coverMode === "picture") {
+    if (!coverImage) {
+      ctx.fillStyle = "#999"; ctx.font = "16px sans-serif"; ctx.textAlign = "center";
+      ctx.fillText("Choose a picture", W / 2, H / 2);
+      return;
+    }
+    const s = Math.max(W / coverImage.width, H / coverImage.height);
+    const dw = coverImage.width * s, dh = coverImage.height * s;
+    ctx.drawImage(coverImage, (W - dw) / 2, (H - dh) / 2, dw, dh);
+    toGray(ctx, W, H, true);
+    return;
+  }
+  const style = $("cover-style").value;
+  const dark = style === "dark";
+  ctx.fillStyle = dark ? "#000" : "#fff"; ctx.fillRect(0, 0, W, H);
+  if (style === "light") { ctx.fillStyle = "#000"; ctx.fillRect(0, 0, 18, H); }
+  if (style === "framed") {
+    ctx.strokeStyle = "#000"; ctx.lineWidth = 6; ctx.strokeRect(12, 12, W - 24, H - 24);
+    ctx.lineWidth = 2; ctx.strokeRect(22, 22, W - 44, H - 44);
+  }
+  if (dark) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(16, 0); ctx.lineTo(16, H); ctx.stroke(); }
+  // Symbol: drawn, then flattened to grey so colour emoji read well on e-ink.
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.font = "120px 'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',serif";
+  ctx.fillStyle = dark ? "#fff" : "#000";
+  ctx.fillText(coverSymbol, W / 2 + (style === "light" ? 8 : 0), H * 0.38);
+  // Title.
+  ctx.font = "bold 26px Georgia, 'Times New Roman', serif";
+  const lines = wrapLines(ctx, $("cover-title").value || "Untitled", W - 60, 3);
+  let y = H * 0.72 - (lines.length - 1) * 15;
+  for (const l of lines) { ctx.fillText(l, W / 2 + (style === "light" ? 8 : 0), y); y += 32; }
+  toGray(ctx, W, H, false);
+}
+
+// Greyscale + auto-levels: e-ink has little contrast, so stretch the range.
+function toGray(ctx, W, H, autoLevels) {
+  const img = ctx.getImageData(0, 0, W, H);
+  const d = img.data;
+  const g = new Uint8Array(W * H);
+  const hist = new Uint32Array(256);
+  for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+    const a = d[i + 3] / 255;
+    const v = Math.round((0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) * a + 255 * (1 - a));
+    g[j] = v; hist[v]++;
+  }
+  let lo = 0, hi = 255;
+  if (autoLevels) {
+    const cut = (W * H) / 100;
+    for (let acc = 0; lo < 255 && (acc += hist[lo]) < cut; lo++);
+    for (let acc = 0; hi > 0 && (acc += hist[hi]) < cut; hi--);
+    if (hi - lo < 32) { lo = 0; hi = 255; }
+  }
+  for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+    const v = Math.max(0, Math.min(255, Math.round(((g[j] - lo) * 255) / (hi - lo))));
+    d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+// 8-bit greyscale BMP (palette), bottom-up rows: what CrossInk's Bitmap reads.
+function canvasToBmp(c) {
+  const W = c.width, H = c.height;
+  const px = c.getContext("2d").getImageData(0, 0, W, H).data;
+  const row = (W + 3) & ~3;
+  const off = 14 + 40 + 1024;
+  const size = off + row * H;
+  const buf = new Uint8Array(size);
+  const dv = new DataView(buf.buffer);
+  buf[0] = 0x42; buf[1] = 0x4d; dv.setUint32(2, size, true); dv.setUint32(10, off, true);
+  dv.setUint32(14, 40, true); dv.setInt32(18, W, true); dv.setInt32(22, H, true);
+  dv.setUint16(26, 1, true); dv.setUint16(28, 8, true); dv.setUint32(34, row * H, true);
+  dv.setUint32(46, 256, true);
+  for (let i = 0; i < 256; i++) { buf[54 + i * 4] = buf[55 + i * 4] = buf[56 + i * 4] = i; }
+  for (let y = 0; y < H; y++) {
+    const dst = off + (H - 1 - y) * row;
+    for (let x = 0; x < W; x++) buf[dst + x] = px[(y * W + x) * 4];
+  }
+  return buf;
+}
+
+$("btn-cover").addEventListener("click", async () => {
+  const book = $("cover-book").value;
+  if (!link || !book) { setStatus("cover-status", "Pick a book first.", "bad"); return; }
+  if (coverMode === "picture" && !coverImage) { setStatus("cover-status", "Choose a picture first.", "bad"); return; }
+  setBusy(true);
+  setStatus("cover-status", "Sending the cover…");
+  try {
+    drawCover();
+    await link.writeFile(`/hermes/covers/${stemOf(book)}.bmp`, canvasToBmp($("cover-preview")));
+    setStatus("cover-status", `Done. "${stemOf(book)}" has its new cover on the home screen.`, "ok");
+  } catch (e) {
+    setStatus("cover-status", e.message, "bad");
+  } finally { setBusy(false); }
+});
+$("btn-cover-reset").addEventListener("click", async () => {
+  const book = $("cover-book").value;
+  if (!link || !book) return;
+  setBusy(true);
+  try {
+    await link.remove(`/hermes/covers/${stemOf(book)}.bmp`);
+    setStatus("cover-status", `"${stemOf(book)}" uses its own cover again.`, "ok");
+  } catch (e) {
+    setStatus("cover-status", e.message, "bad");
+  } finally { setBusy(false); }
+});
+drawCover();
 
 // ---------------------------------------------------------------- misc
 $("btn-copylog").addEventListener("click", async () => {
